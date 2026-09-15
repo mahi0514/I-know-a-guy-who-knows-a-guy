@@ -2,7 +2,6 @@
 ConnectApp — MVP backend
 -------------------------
 A minimal "how am I connected to X" social app.
-
 Features:
   - Create a profile
   - Add a connection between two people
