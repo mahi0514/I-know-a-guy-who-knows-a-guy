@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ConnectApp</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #262a33;
+    --text: #e8e9ec;
+    --muted: #9aa0ac;
+    --accent: #5b8cff;
+    --accent-hover: #4574e8;
+    --success: #3ecf8e;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    padding: 28px 20px 8px;
+    text-align: center;
+  }
+  header h1 {
+    margin: 0 0 4px;
+    font-size: 1.6rem;
+    letter-spacing: -0.02em;
+  }
+  header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+  main {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 1rem;
+    color: var(--text);
+  }
+  label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+    margin-top: 10px;
+  }
+  input, select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #10131a;
+    color: var(--text);
+    font-size: 0.9rem;
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  button {
+    margin-top: 14px;
+    width: 100%;
+    padding: 11px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  .status {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    min-height: 1.2em;
+  }
+  .status.ok { color: var(--success); }
+  .status.err { color: var(--danger); }
+  .path-chain {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .node {
+    background: #1e2330;
+    border: 1px solid var(--accent);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+  }
+  .arrow { color: var(--muted); }
+  .degrees {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .userlist {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+</style>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>ConnectApp</h1>
+  <p>Find the shortest path between any two people</p>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2>1. Create a profile</h2>
+    <label for="name">Name</label>
+    <input id="name" placeholder="e.g. Mahi">
+    <label for="email">Email</label>
+    <input id="email" placeholder="e.g. mahi@example.com">
+    <label for="bio">Bio (optional)</label>
+    <input id="bio" placeholder="Short bio">
+    <button onclick="createUser()">Create Profile</button>
+    <div id="userStatus" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Add a connection</h2>
+    <label for="fromUser">This person</label>
+    <select id="fromUser"></select>
+    <label for="toUser">knows</label>
+    <select id="toUser"></select>
+    <label style="display:flex; align-items:center; gap:6px; margin-top:12px;">
+      <input type="checkbox" id="mutual" checked style="width:auto;">
+      Mutual connection
+    </label>
+    <button onclick="addConnection()">Connect</button>
+    <div id="connStatus" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>3. How am I connected to...?</h2>
+    <label for="searchFrom">From</label>
+    <select id="searchFrom"></select>
+    <label for="searchTo">To</label>
+    <select id="searchTo"></select>
+    <button onclick="searchPath()">Find Path</button>
+    <div id="pathResult"></div>
+  </div>
+
+  <div class="card">
+    <h2>4. View a profile's connection graph</h2>
+    <label for="graphUser">Profile</label>
+    <select id="graphUser"></select>
+    <label for="graphDepth">Depth</label>
+    <select id="graphDepth">
+      <option value="1">Direct connections only</option>
+      <option value="2">Include friends of friends</option>
+    </select>
+    <button onclick="showGraph()">Show Graph</button>
+    <div id="graphStatus" class="status"></div>
+    <div id="graphCanvas" style="height: 320px; margin-top: 12px; border-radius: 10px; overflow: hidden; display: none;"></div>
+  </div>
+
+  <div class="card">
+    <h2>All profiles</h2>
+    <div id="userList" class="userlist">No profiles yet.</div>
+  </div>
+
+</main>
+
+<script>
+const API = "/api";
+
+async function refreshUsers() {
+  const res = await fetch(`${API}/users`);
+  const users = await res.json();
+
+  const selects = ["fromUser", "toUser", "searchFrom", "searchTo", "graphUser"];
+  selects.forEach(id => {
+    const el = document.getElementById(id);
+    const prev = el.value;
+    el.innerHTML = users.map(u => `<option value="${u.id}">${u.name}</option>`).join("");
+    if (prev) el.value = prev;
+  });
+
+  const listEl = document.getElementById("userList");
+  listEl.innerHTML = users.length
+    ? users.map(u => `${u.name} (${u.email})`).join("<br>")
+    : "No profiles yet.";
+}
+
+async function createUser() {
+  const name = document.getElementById("name").value.trim();
+  const email = document.getElementById("email").value.trim();
+  const bio = document.getElementById("bio").value.trim();
+  const statusEl = document.getElementById("userStatus");
+
+  if (!name || !email) {
+    statusEl.textContent = "Name and email are required.";
+    statusEl.className = "status err";
+    return;
+  }
+
+  const res = await fetch(`${API}/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, bio })
+  });
+  const data = await res.json();
+
+  if (res.ok) {
+    statusEl.textContent = `Created profile for ${data.name}.`;
+    statusEl.className = "status ok";
+    document.getElementById("name").value = "";
+    document.getElementById("email").value = "";
+    document.getElementById("bio").value = "";
+    refreshUsers();
+  } else {
+    statusEl.textContent = data.error || "Something went wrong.";
+    statusEl.className = "status err";
+  }
+}
+
+async function addConnection() {
+  const user_id = parseInt(document.getElementById("fromUser").value);
+  const connected_user_id = parseInt(document.getElementById("toUser").value);
+  const mutual = document.getElementById("mutual").checked;
+  const statusEl = document.getElementById("connStatus");
+
+  if (!user_id || !connected_user_id) {
+    statusEl.textContent = "Create at least two profiles first.";
+    statusEl.className = "status err";
+    return;
+  }
+  if (user_id === connected_user_id) {
+    statusEl.textContent = "Pick two different people.";
+    statusEl.className = "status err";
+    return;
+  }
+
+  const res = await fetch(`${API}/connections`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id, connected_user_id, mutual })
+  });
+  const data = await res.json();
+
+  if (res.ok) {
+    statusEl.textContent = "Connected.";
+    statusEl.className = "status ok";
+  } else {
+    statusEl.textContent = data.error || "Something went wrong.";
+    statusEl.className = "status err";
+  }
+}
+
+async function searchPath() {
+  const from = document.getElementById("searchFrom").value;
+  const to = document.getElementById("searchTo").value;
+  const resultEl = document.getElementById("pathResult");
+
+  if (!from || !to) {
+    resultEl.innerHTML = `<div class="status err">Create at least two profiles first.</div>`;
+    return;
+  }
+
+  const res = await fetch(`${API}/path?from=${from}&to=${to}`);
+  const data = await res.json();
+
+  if (!data.connected) {
+    resultEl.innerHTML = `<div class="status err">No connection path found.</div>`;
+    return;
+  }
+
+  const chain = data.path.map(p => `<span class="node">${p.name}</span>`).join(`<span class="arrow">→</span>`);
+  resultEl.innerHTML = `
+    <div class="path-chain">${chain}</div>
+    <div class="degrees">${data.degrees} degree${data.degrees === 1 ? "" : "s"} of separation</div>
+  `;
+}
+
+let networkInstance = null;
+
+async function showGraph() {
+  const userId = document.getElementById("graphUser").value;
+  const depth = document.getElementById("graphDepth").value;
+  const statusEl = document.getElementById("graphStatus");
+  const canvasEl = document.getElementById("graphCanvas");
+
+  if (!userId) {
+    statusEl.textContent = "Create at least one profile first.";
+    statusEl.className = "status err";
+    return;
+  }
+
+  const res = await fetch(`${API}/graph?user_id=${userId}&depth=${depth}`);
+  const data = await res.json();
+
+  if (!data.nodes || data.nodes.length === 0) {
+    statusEl.textContent = "No connections to show yet.";
+    statusEl.className = "status err";
+    canvasEl.style.display = "none";
+    return;
+  }
+
+  statusEl.textContent = "";
+  canvasEl.style.display = "block";
+
+  const nodes = new vis.DataSet(data.nodes.map(n => ({
+    id: n.id,
+    label: n.label,
+    color: n.id == userId ? "#5b8cff" : "#1e2330",
+    font: { color: "#e8e9ec" }
+  })));
+  const edges = new vis.DataSet(data.edges);
+
+  const options = {
+    nodes: { shape: "dot", size: 16, borderWidth: 2 },
+    edges: { color: "#3a3f4b", width: 2 },
+    physics: { stabilization: true },
+    interaction: { zoomView: true, dragView: true }
+  };
+
+  if (networkInstance) networkInstance.destroy();
+  networkInstance = new vis.Network(canvasEl, { nodes, edges }, options);
+}
+
+refreshUsers();
+</script>
+
+</body>
+</html>
