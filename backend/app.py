@@ -31,11 +31,7 @@ app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
 
-
-def init_db():
-    conn = get_db()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,6 +39,7 @@ def init_db():
             email TEXT UNIQUE NOT NULL,
             bio TEXT
         );
+
         CREATE TABLE IF NOT EXISTS connections (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -50,8 +47,8 @@ def init_db():
             UNIQUE(user_id, connected_user_id)
         );
     """)
-    conn.commit()
-    conn.close()
+
+    return conn
 
 
 # ---------- Frontend ----------
@@ -227,5 +224,3 @@ def get_path():
 
 
 if __name__ == "__main__":
-    init_db()
-    app.run(debug=True, host="0.0.0.0", port=5000)
