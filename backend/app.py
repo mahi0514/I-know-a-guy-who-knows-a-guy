@@ -1,54 +1,47 @@
 """
-ConnectApp — MVP backend
--------------------------
-A minimal "how am I connected to X" social app.
-Features:
-  - Create a profile
-  - Add a connection between two people
-  - Search: shortest connection path between two people (BFS)
-  - Serves the frontend (../frontend) as static files, so the whole
-    app runs from a single command and can be shared with others.
-
-Run:
-  pip install flask --break-system-packages
-  python app.py
-Then open http://localhost:5000 in a browser.
+ConnectApp — Cloud Backend with PostgreSQL
 """
 
 from flask import Flask, request, jsonify, send_from_directory
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import os
 from collections import deque
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
-DB_PATH = os.path.join(BASE_DIR, "connections.db")
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
-
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            bio TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS connections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            connected_user_id INTEGER NOT NULL,
-            UNIQUE(user_id, connected_user_id)
-        );
-    """)
-
+    # 1. Fetch the Render database URL we just configured
+    db_url = os.environ.get("DATABASE_URL")
+    
+    # 2. Fix the prefix because SQLAlchemy/psycopg2 requires 'postgresql://' instead of 'postgres://'
+    if db_url and db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+    # 3. Connect to PostgreSQL cloud instance
+    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+    
+    # 4. Initialize tables if they don't exist in PostgreSQL
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                bio TEXT
+            );
+            CREATE TABLE IF NOT EXISTS connections (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                connected_user_id INTEGER NOT NULL,
+                UNIQUE(user_id, connected_user_id)
+            );
+        """)
+        conn.commit()
     return conn
-
 
 # ---------- Frontend ----------
 
@@ -56,16 +49,16 @@ def get_db():
 def index():
     return send_from_directory(FRONTEND_DIR, "index.html")
 
-
 # ---------- API ----------
 
 @app.route("/api/users", methods=["GET"])
 def list_users():
     conn = get_db()
-    rows = conn.execute("SELECT id, name, email, bio FROM users ORDER BY name").fetchall()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, name, email, bio FROM users ORDER BY name")
+        rows = cur.fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows]), 200
-
 
 @app.route("/api/users", methods=["POST"])
 def create_user():
@@ -76,19 +69,20 @@ def create_user():
 
     conn = get_db()
     try:
-        cur = conn.execute(
-            "INSERT INTO users (name, email, bio) VALUES (?, ?, ?)",
-            (name, email, bio),
-        )
-        conn.commit()
-        user_id = cur.lastrowid
-    except sqlite3.IntegrityError:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (name, email, bio) VALUES (%s, %s, %s) RETURNING id",
+                (name, email, bio),
+            )
+            user_id = cur.fetchone()["id"]
+            conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
         return jsonify({"error": "email already exists"}), 409
     finally:
         conn.close()
 
     return jsonify({"id": user_id, "name": name, "email": email, "bio": bio}), 201
-
 
 @app.route("/api/connections", methods=["POST"])
 def add_connection():
@@ -104,41 +98,35 @@ def add_connection():
 
     conn = get_db()
     try:
-        conn.execute(
-            "INSERT OR IGNORE INTO connections (user_id, connected_user_id) VALUES (?, ?)",
-            (user_id, connected_user_id),
-        )
-        if mutual:
-            conn.execute(
-                "INSERT OR IGNORE INTO connections (user_id, connected_user_id) VALUES (?, ?)",
-                (connected_user_id, user_id),
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO connections (user_id, connected_user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (user_id, connected_user_id),
             )
-        conn.commit()
+            if mutual:
+                cur.execute(
+                    "INSERT INTO connections (user_id, connected_user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (connected_user_id, user_id),
+                )
+            conn.commit()
     finally:
         conn.close()
 
     return jsonify({"status": "connected", "mutual": mutual}), 201
 
-
 def build_adjacency():
     conn = get_db()
-    rows = conn.execute("SELECT user_id, connected_user_id FROM connections").fetchall()
+    with conn.cursor() as cur:
+        cur.execute("SELECT user_id, connected_user_id FROM connections")
+        rows = cur.fetchall()
     conn.close()
     graph = {}
     for row in rows:
         graph.setdefault(row["user_id"], []).append(row["connected_user_id"])
     return graph
 
-
 @app.route("/api/graph", methods=["GET"])
 def get_graph():
-    """
-    Returns the connection network around one user, as nodes + edges,
-    for rendering a visual graph on the frontend.
-
-    depth=1 (default): the user and everyone they're directly connected to
-    depth=2: also includes their connections' connections
-    """
     user_id = request.args.get("user_id", type=int)
     depth = request.args.get("depth", default=1, type=int)
 
@@ -161,17 +149,17 @@ def get_graph():
         frontier = next_frontier
 
     conn = get_db()
-    placeholders = ",".join("?" for _ in visited)
-    rows = conn.execute(
-        f"SELECT id, name FROM users WHERE id IN ({placeholders})", list(visited)
-    ).fetchall()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, name FROM users WHERE id IN %s", (tuple(visited),)
+        )
+        rows = cur.fetchall()
     conn.close()
 
     nodes = [{"id": r["id"], "label": r["name"]} for r in rows]
     edges = [{"from": a, "to": b} for a, b in edge_pairs]
 
     return jsonify({"nodes": nodes, "edges": edges}), 200
-
 
 def find_shortest_path(start_id, target_id):
     if start_id == target_id:
@@ -189,9 +177,7 @@ def find_shortest_path(start_id, target_id):
             if neighbor not in visited:
                 visited.add(neighbor)
                 queue.append((neighbor, path + [neighbor]))
-
     return None
-
 
 @app.route("/api/path", methods=["GET"])
 def get_path():
@@ -206,10 +192,11 @@ def get_path():
         return jsonify({"connected": False, "path": []}), 200
 
     conn = get_db()
-    placeholders = ",".join("?" for _ in path_ids)
-    rows = conn.execute(
-        f"SELECT id, name FROM users WHERE id IN ({placeholders})", path_ids
-    ).fetchall()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, name FROM users WHERE id IN %s", (tuple(path_ids),)
+        )
+        rows = cur.fetchall()
     conn.close()
 
     id_to_name = {row["id"]: row["name"] for row in rows}
@@ -222,5 +209,5 @@ def get_path():
     }), 200
 
 if __name__ == "__main__":
-  port = int(os.environ.get("PORT", 5000))
-  app.run(debug=False, host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
